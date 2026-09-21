@@ -1,20 +1,15 @@
 import type { HttpContext } from '@adonisjs/core/http'
 import nodemailer from 'nodemailer'
-
 import Message from '#models/message'
 import { createMessageValidator } from '#validators/message'
 import { mailConfig } from '../../config/mail.js'
+import SMTPTransport from 'nodemailer/lib/smtp-transport/index.js'
 
 export default class MessagesController {
   /**
-   * =====================================================
-   * UTILITÁRIOS
-   * =====================================================
-   */
-
-  /**
-   * Evita que conteúdo enviado pelo visitante
-   * seja interpretado como HTML dentro do e-mail.
+   * Escapa caracteres HTML para evitar
+   * problemas quando os dados do formulário
+   * forem inseridos no email.
    */
   private escapeHtml(value: string): string {
     return value
@@ -26,153 +21,179 @@ export default class MessagesController {
   }
 
   /**
-   * Cria o transportador SMTP do Gmail.
+   * Cria a conexão SMTP.
+   *
+   * Gmail:
+   * Host: smtp.gmail.com
+   * Porta: 587
+   * secure: false
+   * STARTTLS
+   *
+   * family: 4
+   * força IPv4 e evita o erro de IPv6
+   * ENETUNREACH.
    */
-  private createTransporter() {
-    return nodemailer.createTransport({
-      host: mailConfig.host,
+  private createTransporter(): nodemailer.Transporter<SMTPTransport.SentMessageInfo> {
+     const smtpOptions: SMTPTransport.Options = {
+    host: mailConfig.host,
+    port: Number(mailConfig.port),
+    secure: Boolean(mailConfig.secure),
 
-      /**
-       * Gmail:
-       * 587 = STARTTLS
-       */
-      port: 587,
+    auth: {
+      user: mailConfig.auth.user,
+      pass: mailConfig.auth.pass,
+    },
 
-      /**
-       * Na porta 587 usamos STARTTLS.
-       */
-      secure: false,
+    tls: {
+      rejectUnauthorized: true,
+    },
 
-      auth: {
-        user: mailConfig.auth.user,
-        pass: mailConfig.auth.pass,
-      },
-
-      tls: {
-        rejectUnauthorized: true,
-      },
-
-      /**
-       * Evita que a aplicação fique presa
-       * indefinidamente tentando conectar.
-       */
-      connectionTimeout: 15000,
-      greetingTimeout: 15000,
-      socketTimeout: 15000,
-    })
+    connectionTimeout: 30000,
+    greetingTimeout: 30000,
+    socketTimeout: 30000,
   }
 
+  return nodemailer.createTransport(smtpOptions)
+}
+
   /**
-   * =====================================================
-   * ENVIAR MENSAGEM
-   * =====================================================
+   * Criar e enviar uma mensagem.
    */
   async store({ request, response }: HttpContext) {
     try {
       /**
-       * 1. Validar dados
+       * Validar dados do formulário.
        */
       const data = await request.validateUsing(
         createMessageValidator
       )
 
-      /**
-       * 2. Verificar configuração SMTP
-       */
-      console.log('================================')
+      console.log('==========================================')
       console.log('CONFIGURAÇÃO SMTP')
-      console.log('================================')
-      console.log('HOST:', mailConfig.host)
-      console.log('PORTA:', 587)
-      console.log('SECURE:', false)
-      console.log('USUÁRIO:', mailConfig.auth.user)
+      console.log('==========================================')
+
       console.log(
-        'PASSWORD EXISTE:',
+        'HOST:',
+        mailConfig.host
+      )
+
+      console.log(
+        'PORTA:',
+        mailConfig.port
+      )
+
+      console.log(
+        'SECURE:',
+        mailConfig.secure
+      )
+
+      console.log(
+        'FAMÍLIA IP:',
+        4
+      )
+
+      console.log(
+        'USUÁRIO:',
+        mailConfig.auth.user
+      )
+
+      console.log(
+        'SENHA CONFIGURADA:',
         Boolean(mailConfig.auth.pass)
       )
+
       console.log(
-        'COMPRIMENTO PASSWORD:',
-        mailConfig.auth.pass?.length
+        'COMPRIMENTO DA SENHA:',
+        mailConfig.auth.pass?.length ?? 0
       )
-      console.log('DESTINO:', mailConfig.to)
-      console.log('================================')
+
+      console.log(
+        'FROM:',
+        mailConfig.from.address
+      )
+
+      console.log(
+        'TO:',
+        mailConfig.to
+      )
 
       /**
-       * Verificação básica das variáveis.
+       * Verifica se as configurações
+       * obrigatórias existem.
        */
-      if (!mailConfig.auth.user) {
-        console.error('MAIL_USERNAME não configurado.')
-
+      if (!mailConfig.host) {
         return response.status(500).json({
-          message: 'Configuração de e-mail incompleta.',
+          message: 'MAIL_HOST não configurado.',
+        })
+      }
+
+      if (!mailConfig.auth.user) {
+        return response.status(500).json({
+          message: 'MAIL_USERNAME não configurado.',
         })
       }
 
       if (!mailConfig.auth.pass) {
-        console.error('MAIL_PASSWORD não configurado.')
-
         return response.status(500).json({
-          message: 'Senha SMTP não configurada.',
+          message: 'MAIL_PASSWORD não configurado.',
+        })
+      }
+
+      if (!mailConfig.from.address) {
+        return response.status(500).json({
+          message:
+            'MAIL_FROM_ADDRESS não configurado.',
         })
       }
 
       if (!mailConfig.to) {
-        console.error('MAIL_TO não configurado.')
-
-        return response.status(500).json({
-          message: 'E-mail de destino não configurado.',
-        })
-      }
-
-      /**
-       * 3. Criar transporter
-       */
-      const transporter = this.createTransporter()
-
-      /**
-       * 4. Testar conexão SMTP
-       */
-      console.log('================================')
-      console.log('TESTANDO CONEXÃO SMTP...')
-      console.log('================================')
-
-      try {
-        await transporter.verify()
-
-        console.log('SMTP CONECTADO COM SUCESSO!')
-      } catch (smtpError) {
-        console.error('================================')
-        console.error('ERRO AO CONECTAR AO SMTP')
-        console.error('================================')
-
-        console.error(smtpError)
-
         return response.status(500).json({
           message:
-            'Não foi possível conectar ao servidor de e-mail.',
-
-          error:
-            smtpError instanceof Error
-              ? smtpError.message
-              : String(smtpError),
+            'MAIL_TO não configurado.',
         })
       }
 
       /**
-       * 5. Escapar conteúdo recebido
+       * Criar transporter SMTP.
        */
-      const name = this.escapeHtml(data.name)
-      const email = this.escapeHtml(data.email)
-      const subject = this.escapeHtml(data.subject)
-      const messageText = this.escapeHtml(data.message)
+      const transporter =
+        this.createTransporter()
+
+      console.log('==========================================')
+      console.log('PREPARANDO EMAIL')
+      console.log('==========================================')
 
       /**
-       * 6. HTML do e-mail
+       * Escapar os dados antes de
+       * inserir no HTML.
+       */
+      const name = this.escapeHtml(
+        data.name
+      )
+
+      const email = this.escapeHtml(
+        data.email
+      )
+
+      const subject = this.escapeHtml(
+        data.subject
+      )
+
+      const messageText =
+        this.escapeHtml(
+          data.message
+        )
+
+      /**
+       * Template HTML do email.
        */
       const html = `
 <!DOCTYPE html>
+
 <html lang="pt">
+
 <head>
+
   <meta charset="UTF-8">
 
   <meta
@@ -180,7 +201,8 @@ export default class MessagesController {
     content="width=device-width, initial-scale=1.0"
   >
 
-  <title>Nova mensagem - Portfólio</title>
+  <title>Nova mensagem</title>
+
 </head>
 
 <body
@@ -193,7 +215,6 @@ export default class MessagesController {
   "
 >
 
-  <!-- Espaçamento -->
   <table
     width="100%"
     cellpadding="0"
@@ -201,90 +222,64 @@ export default class MessagesController {
     border="0"
     style="
       background:#f1f5f9;
-      padding:40px 16px;
+      padding:40px 15px;
     "
   >
 
     <tr>
+
       <td align="center">
 
-        <!-- Container -->
         <table
           width="100%"
           cellpadding="0"
           cellspacing="0"
           border="0"
           style="
-            max-width:650px;
+            max-width:680px;
             background:#ffffff;
-            border-radius:18px;
+            border-radius:16px;
             overflow:hidden;
-            border:1px solid #e2e8f0;
+            box-shadow:
+              0 10px 30px
+              rgba(15,23,42,0.08);
           "
         >
 
           <!-- HEADER -->
+
           <tr>
+
             <td
               style="
-                padding:32px;
                 background:#0f172a;
+                padding:35px 40px;
+                text-align:center;
               "
             >
 
-              <table
-                width="100%"
-                cellpadding="0"
-                cellspacing="0"
-                border="0"
+              <div
+                style="
+                  width:58px;
+                  height:58px;
+                  margin:0 auto 18px;
+                  background:#5FA8A0;
+                  border-radius:14px;
+                  line-height:58px;
+                  font-size:28px;
+                  font-weight:bold;
+                  color:#ffffff;
+                "
               >
-
-                <tr>
-
-                  <!-- Logo -->
-                  <td>
-
-                    <div
-                      style="
-                        width:48px;
-                        height:48px;
-                        line-height:48px;
-                        text-align:center;
-                        background:#5FA8A0;
-                        color:#0f172a;
-                        border-radius:12px;
-                        font-size:22px;
-                        font-weight:bold;
-                      "
-                    >
-                      E
-                    </div>
-
-                  </td>
-
-                  <!-- Categoria -->
-                  <td
-                    align="right"
-                    style="
-                      color:#94a3b8;
-                      font-size:11px;
-                      letter-spacing:1.5px;
-                      font-weight:bold;
-                    "
-                  >
-                    PORTFÓLIO
-                  </td>
-
-                </tr>
-
-              </table>
+                E
+              </div>
 
               <h1
                 style="
-                  margin:28px 0 8px;
+                  margin:0;
                   color:#ffffff;
-                  font-size:28px;
-                  line-height:1.3;
+                  font-size:26px;
+                  line-height:34px;
                 "
               >
                 Nova mensagem
@@ -292,24 +287,45 @@ export default class MessagesController {
 
               <p
                 style="
-                  margin:0;
-                  color:#94a3b8;
+                  margin:8px 0 0;
+                  color:#cbd5e1;
                   font-size:14px;
-                  line-height:1.6;
                 "
               >
-                Você recebeu uma nova mensagem através
-                do seu portfólio.
+                Recebida através do seu portfólio
               </p>
 
             </td>
+
           </tr>
 
-          <!-- CONTEÚDO -->
-          <tr>
-            <td style="padding:32px;">
 
-              <!-- Informações -->
+          <!-- CONTENT -->
+
+          <tr>
+
+            <td
+              style="
+                padding:40px;
+              "
+            >
+
+              <p
+                style="
+                  margin:0 0 25px;
+                  color:#475569;
+                  font-size:15px;
+                  line-height:24px;
+                "
+              >
+                Você recebeu uma nova mensagem
+                através do formulário de contacto
+                do seu portfólio.
+              </p>
+
+
+              <!-- INFORMATION -->
+
               <table
                 width="100%"
                 cellpadding="0"
@@ -319,31 +335,43 @@ export default class MessagesController {
                   border:1px solid #e2e8f0;
                   border-radius:12px;
                   overflow:hidden;
+                  margin-bottom:25px;
                 "
               >
 
-                <!-- Nome -->
+                <!-- NAME -->
+
                 <tr>
 
                   <td
-                    width="110"
                     style="
-                      padding:16px;
-                      color:#64748b;
-                      font-size:12px;
-                      font-weight:bold;
+                      padding:16px 18px;
                       background:#f8fafc;
+                      border-bottom:
+                        1px solid #e2e8f0;
+                      width:120px;
                     "
                   >
-                    NOME
+
+                    <strong
+                      style="
+                        font-size:12px;
+                        color:#64748b;
+                        letter-spacing:.5px;
+                      "
+                    >
+                      NOME
+                    </strong>
+
                   </td>
 
                   <td
                     style="
-                      padding:16px;
+                      padding:16px 18px;
+                      border-bottom:
+                        1px solid #e2e8f0;
+                      font-size:15px;
                       color:#0f172a;
-                      font-size:14px;
-                      font-weight:600;
                     "
                   >
                     ${name}
@@ -351,59 +379,84 @@ export default class MessagesController {
 
                 </tr>
 
-                <!-- Email -->
+
+                <!-- EMAIL -->
+
                 <tr>
 
                   <td
-                    width="110"
                     style="
-                      padding:16px;
-                      color:#64748b;
-                      font-size:12px;
-                      font-weight:bold;
+                      padding:16px 18px;
                       background:#f8fafc;
-                      border-top:1px solid #e2e8f0;
+                      border-bottom:
+                        1px solid #e2e8f0;
                     "
                   >
-                    EMAIL
+
+                    <strong
+                      style="
+                        font-size:12px;
+                        color:#64748b;
+                        letter-spacing:.5px;
+                      "
+                    >
+                      EMAIL
+                    </strong>
+
                   </td>
 
                   <td
                     style="
-                      padding:16px;
-                      color:#5FA8A0;
-                      font-size:14px;
-                      border-top:1px solid #e2e8f0;
+                      padding:16px 18px;
+                      border-bottom:
+                        1px solid #e2e8f0;
+                      font-size:15px;
                     "
                   >
-                    ${email}
+
+                    <a
+                      href="mailto:${email}"
+                      style="
+                        color:#5FA8A0;
+                        text-decoration:none;
+                      "
+                    >
+                      ${email}
+                    </a>
+
                   </td>
 
                 </tr>
 
-                <!-- Assunto -->
+
+                <!-- SUBJECT -->
+
                 <tr>
 
                   <td
-                    width="110"
                     style="
-                      padding:16px;
-                      color:#64748b;
-                      font-size:12px;
-                      font-weight:bold;
+                      padding:16px 18px;
                       background:#f8fafc;
-                      border-top:1px solid #e2e8f0;
                     "
                   >
-                    ASSUNTO
+
+                    <strong
+                      style="
+                        font-size:12px;
+                        color:#64748b;
+                        letter-spacing:.5px;
+                      "
+                    >
+                      ASSUNTO
+                    </strong>
+
                   </td>
 
                   <td
                     style="
-                      padding:16px;
+                      padding:16px 18px;
+                      font-size:15px;
                       color:#0f172a;
-                      font-size:14px;
-                      border-top:1px solid #e2e8f0;
                     "
                   >
                     ${subject}
@@ -413,82 +466,64 @@ export default class MessagesController {
 
               </table>
 
-              <!-- Título -->
+
+              <!-- MESSAGE -->
+
               <div
                 style="
-                  margin-top:30px;
-                  margin-bottom:12px;
-                "
-              >
-
-                <span
-                  style="
-                    display:inline-block;
-                    width:4px;
-                    height:18px;
-                    background:#5FA8A0;
-                    border-radius:4px;
-                    vertical-align:middle;
-                    margin-right:8px;
-                  "
-                ></span>
-
-                <span
-                  style="
-                    color:#0f172a;
-                    font-size:16px;
-                    font-weight:bold;
-                    vertical-align:middle;
-                  "
-                >
-                  Mensagem
-                </span>
-
-              </div>
-
-              <!-- Mensagem -->
-              <div
-                style="
-                  padding:22px;
                   background:#f8fafc;
                   border:1px solid #e2e8f0;
                   border-radius:12px;
+                  padding:24px;
+                  margin-bottom:28px;
                 "
               >
 
-                <p
+                <div
                   style="
-                    margin:0;
+                    font-size:12px;
+                    font-weight:bold;
+                    color:#64748b;
+                    letter-spacing:.5px;
+                    margin-bottom:12px;
+                  "
+                >
+                  MENSAGEM
+                </div>
+
+                <div
+                  style="
+                    font-size:15px;
+                    line-height:26px;
                     color:#334155;
-                    font-size:14px;
-                    line-height:1.8;
-                    white-space:pre-line;
+                    white-space:pre-wrap;
                   "
                 >
                   ${messageText}
-                </p>
+                </div>
 
               </div>
 
-              <!-- Botão -->
+
+              <!-- BUTTON -->
+
               <div
                 style="
-                  margin-top:28px;
                   text-align:center;
                 "
               >
 
                 <a
-                  href="mailto:${email}"
+                  href="mailto:${email}?subject=Re: ${subject}"
                   style="
                     display:inline-block;
-                    padding:14px 24px;
                     background:#5FA8A0;
-                    color:#0f172a;
+                    color:#ffffff;
                     text-decoration:none;
-                    border-radius:10px;
                     font-size:14px;
                     font-weight:bold;
+                    padding:14px 24px;
+                    border-radius:9px;
                   "
                 >
                   Responder mensagem
@@ -497,16 +532,20 @@ export default class MessagesController {
               </div>
 
             </td>
+
           </tr>
 
+
           <!-- FOOTER -->
+
           <tr>
 
             <td
               style="
-                padding:24px 32px;
                 background:#f8fafc;
-                border-top:1px solid #e2e8f0;
+                border-top:
+                  1px solid #e2e8f0;
+                padding:25px 40px;
                 text-align:center;
               "
             >
@@ -514,22 +553,19 @@ export default class MessagesController {
               <p
                 style="
                   margin:0;
-                  color:#64748b;
-                  font-size:12px;
-                  line-height:1.6;
+                  color:#0f172a;
+                  font-size:14px;
+                  font-weight:bold;
                 "
               >
-                Mensagem enviada através do
-                <strong style="color:#334155;">
-                  Portfólio Efraim Manuel
-                </strong>
+                Portfólio Efraim Manuel
               </p>
 
               <p
                 style="
                   margin:6px 0 0;
-                  color:#94a3b8;
-                  font-size:11px;
+                  color:#64748b;
+                  font-size:12px;
                 "
               >
                 Full Stack Developer
@@ -542,40 +578,52 @@ export default class MessagesController {
         </table>
 
       </td>
+
     </tr>
 
   </table>
 
 </body>
+
 </html>
-      `
+`
+
+      console.log('==========================================')
+      console.log('ENVIANDO EMAIL...')
+      console.log('==========================================')
 
       /**
-       * 7. Enviar e-mail
+       * NÃO usar transporter.verify().
+       *
+       * sendMail() fará a conexão SMTP
+       * diretamente.
        */
-      console.log('Enviando e-mail...')
-
-      let info
+      let info: SMTPTransport.SentMessageInfo
 
       try {
         info = await transporter.sendMail({
+
           from: {
             name: mailConfig.from.name,
-            address: mailConfig.from.address,
+            address:
+              mailConfig.from.address,
           },
 
           to: mailConfig.to,
 
           /**
-           * Quando você clicar em "Responder"
-           * no Gmail, responderá diretamente ao visitante.
+           * Quando você clicar em
+           * "Responder" no Gmail,
+           * a resposta vai para
+           * o email do visitante.
            */
           replyTo: data.email,
 
-          subject: `Novo contacto: ${data.subject}`,
+          subject:
+            `Novo contacto: ${data.subject}`,
 
           text: `
-Nova mensagem recebida pelo seu portfólio.
+Nova mensagem recebida através do portfólio.
 
 Nome: ${data.name}
 Email: ${data.email}
@@ -588,12 +636,92 @@ ${data.message}
 
           html,
         })
-      } catch (emailError) {
-        console.error('================================')
-        console.error('ERRO AO ENVIAR EMAIL')
-        console.error('================================')
 
-        console.error(emailError)
+      } catch (emailError) {
+
+        console.error(
+          '=========================================='
+        )
+
+        console.error(
+          'ERRO AO ENVIAR EMAIL'
+        )
+
+        console.error(
+          '=========================================='
+        )
+
+        console.error(
+          'TIPO:',
+          emailError instanceof Error
+            ? emailError.name
+            : typeof emailError
+        )
+
+        console.error(
+          'MENSAGEM:',
+          emailError instanceof Error
+            ? emailError.message
+            : String(emailError)
+        )
+
+        if (
+          typeof emailError === 'object' &&
+          emailError !== null
+        ) {
+
+          const smtpError =
+            emailError as {
+              code?: string
+              command?: string
+              response?: string
+              responseCode?: number
+              errno?: number
+              syscall?: string
+              address?: string
+              port?: number
+            }
+
+          console.error(
+            'CÓDIGO:',
+            smtpError.code
+          )
+
+          console.error(
+            'COMANDO:',
+            smtpError.command
+          )
+
+          console.error(
+            'RESPOSTA SMTP:',
+            smtpError.response
+          )
+
+          console.error(
+            'CÓDIGO RESPOSTA:',
+            smtpError.responseCode
+          )
+
+          console.error(
+            'ENDEREÇO:',
+            smtpError.address
+          )
+
+          console.error(
+            'PORTA:',
+            smtpError.port
+          )
+
+          console.error(
+            'ERRNO:',
+            smtpError.errno
+          )
+
+          console.error(
+            'SYSCALL:',
+            smtpError.syscall
+          )
+        }
 
         return response.status(500).json({
           message:
@@ -606,19 +734,33 @@ ${data.message}
         })
       }
 
-      /**
-       * 8. Confirmar envio
-       */
-      console.log('================================')
+      console.log('==========================================')
       console.log('EMAIL ENVIADO COM SUCESSO')
-      console.log('MESSAGE ID:', info.messageId)
-      console.log('ACCEPTED:', info.accepted)
-      console.log('REJECTED:', info.rejected)
-      console.log('================================')
+      console.log('==========================================')
+
+      console.log(
+        'MESSAGE ID:',
+        info.messageId
+      )
+
+      console.log(
+        'ACCEPTED:',
+        info.accepted
+      )
+
+      console.log(
+        'REJECTED:',
+        info.rejected
+      )
+
+      console.log(
+        'RESPONSE:',
+        info.response
+      )
 
       /**
-       * 9. Salvar no banco somente depois
-       * que o Gmail aceitar o e-mail.
+       * Salvar no banco somente depois
+       * do envio do email.
        */
       const message = await Message.create({
         name: data.name,
@@ -628,45 +770,60 @@ ${data.message}
         read: false,
       })
 
-      /**
-       * 10. Resposta
-       */
       return response.status(201).json({
-        message: 'Mensagem enviada com sucesso.',
+
+        message:
+          'Mensagem enviada com sucesso.',
 
         data: {
           id: message.id,
           name: message.name,
           email: message.email,
           subject: message.subject,
-          createdAt: message.createdAt,
+          createdAt:
+            message.createdAt,
         },
+
       })
+
     } catch (error) {
-      console.error('================================')
-      console.error('ERRO NO CONTROLLER DE MENSAGENS')
-      console.error('================================')
+
+      console.error(
+        '=========================================='
+      )
+
+      console.error(
+        'ERRO NO CONTROLLER DE MENSAGENS'
+      )
+
+      console.error(
+        '=========================================='
+      )
 
       console.error(error)
 
       /**
-       * Erros de validação
+       * Erro de validação.
        */
       if (
         typeof error === 'object' &&
         error !== null &&
         'messages' in error
       ) {
+
         return response.status(422).json({
-          message: 'Dados inválidos.',
-          errors: error.messages,
+
+          message:
+            'Dados inválidos.',
+
+          errors:
+            error.messages,
+
         })
       }
 
-      /**
-       * Outros erros
-       */
       return response.status(500).json({
+
         message:
           'Não foi possível processar a mensagem.',
 
@@ -674,69 +831,108 @@ ${data.message}
           error instanceof Error
             ? error.message
             : String(error),
+
       })
     }
   }
 
   /**
-   * =====================================================
-   * LISTAR MENSAGENS
-   * =====================================================
+   * Listar mensagens.
    */
   async index({ response }: HttpContext) {
     try {
-      const messages = await Message.query()
-        .orderBy('created_at', 'desc')
 
-      return response.json(messages)
+      const messages =
+        await Message
+          .query()
+          .orderBy(
+            'created_at',
+            'desc'
+          )
+
+      return response.json(
+        messages
+      )
+
     } catch (error) {
+
       console.error(error)
 
       return response.status(500).json({
-        message: 'Erro ao buscar mensagens.',
+
+        message:
+          'Erro ao buscar mensagens.',
+
       })
     }
   }
 
   /**
-   * =====================================================
-   * BUSCAR UMA MENSAGEM
-   * =====================================================
+   * Mostrar uma mensagem.
    */
-  async show({ params, response }: HttpContext) {
+  async show({
+    params,
+    response,
+  }: HttpContext) {
+
     try {
-      const message = await Message.find(params.id)
+
+      const message =
+        await Message.find(
+          params.id
+        )
 
       if (!message) {
+
         return response.status(404).json({
-          message: 'Mensagem não encontrada.',
+
+          message:
+            'Mensagem não encontrada.',
+
         })
       }
 
       return response.json({
+
         data: message,
+
       })
+
     } catch (error) {
+
       console.error(error)
 
       return response.status(500).json({
-        message: 'Erro ao buscar mensagem.',
+
+        message:
+          'Erro ao buscar mensagem.',
+
       })
     }
   }
 
   /**
-   * =====================================================
-   * MARCAR COMO LIDA
-   * =====================================================
+   * Marcar mensagem como lida.
    */
-  async read({ params, response }: HttpContext) {
+  async read({
+    params,
+    response,
+  }: HttpContext) {
+
     try {
-      const message = await Message.find(params.id)
+
+      const message =
+        await Message.find(
+          params.id
+        )
 
       if (!message) {
+
         return response.status(404).json({
-          message: 'Mensagem não encontrada.',
+
+          message:
+            'Mensagem não encontrada.',
+
         })
       }
 
@@ -745,43 +941,70 @@ ${data.message}
       await message.save()
 
       return response.json({
-        message: 'Mensagem marcada como lida.',
+
+        message:
+          'Mensagem marcada como lida.',
+
         data: message,
+
       })
+
     } catch (error) {
+
       console.error(error)
 
       return response.status(500).json({
-        message: 'Erro ao atualizar mensagem.',
+
+        message:
+          'Erro ao atualizar mensagem.',
+
       })
     }
   }
 
   /**
-   * =====================================================
-   * APAGAR MENSAGEM
-   * =====================================================
+   * Apagar mensagem.
    */
-  async destroy({ params, response }: HttpContext) {
+  async destroy({
+    params,
+    response,
+  }: HttpContext) {
+
     try {
-      const message = await Message.find(params.id)
+
+      const message =
+        await Message.find(
+          params.id
+        )
 
       if (!message) {
+
         return response.status(404).json({
-          message: 'Mensagem não encontrada.',
+
+          message:
+            'Mensagem não encontrada.',
+
         })
       }
 
       await message.delete()
 
       return response.json({
-        message: 'Mensagem apagada com sucesso.',
+
+        message:
+          'Mensagem apagada com sucesso.',
+
       })
+
     } catch (error) {
+
       console.error(error)
 
       return response.status(500).json({
-        message: 'Erro ao apagar mensagem.',
+
+        message:
+          'Erro ao apagar mensagem.',
+
       })
     }
   }
