@@ -21,40 +21,42 @@ export default class MessagesController {
   }
 
   /**
-   * Cria a conexão SMTP.
+   * Cria o transporter SMTP.
    *
    * Gmail:
-   * Host: smtp.gmail.com
-   * Porta: 587
-   * secure: false
-   * STARTTLS
+   * HOST: smtp.gmail.com
+   * PORT: 587
+   * SECURE: false
    *
-   * family: 4
-   * força IPv4 e evita o erro de IPv6
-   * ENETUNREACH.
+   * A porta 587 utiliza STARTTLS.
+   *
+   * IMPORTANTE:
+   * Não usamos "family: 4" porque a versão
+   * instalada do Nodemailer não aceita essa
+   * propriedade nas opções SMTP.
    */
-  private createTransporter(): nodemailer.Transporter<SMTPTransport.SentMessageInfo> {
-     const smtpOptions: SMTPTransport.Options = {
-    host: mailConfig.host,
-    port: Number(mailConfig.port),
-    secure: Boolean(mailConfig.secure),
+  private createTransporter(): nodemailer.Transporter {
+    const smtpOptions: SMTPTransport.Options = {
+      host: mailConfig.host,
+      port: Number(mailConfig.port),
+      secure: Boolean(mailConfig.secure),
 
-    auth: {
-      user: mailConfig.auth.user,
-      pass: mailConfig.auth.pass,
-    },
+      auth: {
+        user: mailConfig.auth.user,
+        pass: mailConfig.auth.pass,
+      },
 
-    tls: {
-      rejectUnauthorized: true,
-    },
+      tls: {
+        rejectUnauthorized: true,
+      },
 
-    connectionTimeout: 30000,
-    greetingTimeout: 30000,
-    socketTimeout: 30000,
+      connectionTimeout: 30000,
+      greetingTimeout: 30000,
+      socketTimeout: 30000,
+    }
+
+    return nodemailer.createTransport(smtpOptions)
   }
-
-  return nodemailer.createTransport(smtpOptions)
-}
 
   /**
    * Criar e enviar uma mensagem.
@@ -62,40 +64,29 @@ export default class MessagesController {
   async store({ request, response }: HttpContext) {
     try {
       /**
-       * Validar dados do formulário.
+       * =====================================================
+       * 1. VALIDAR DADOS
+       * =====================================================
        */
       const data = await request.validateUsing(
         createMessageValidator
       )
 
+      /**
+       * =====================================================
+       * 2. MOSTRAR CONFIGURAÇÃO SMTP
+       * =====================================================
+       *
+       * Não mostramos a senha no console.
+       */
       console.log('==========================================')
       console.log('CONFIGURAÇÃO SMTP')
       console.log('==========================================')
 
-      console.log(
-        'HOST:',
-        mailConfig.host
-      )
-
-      console.log(
-        'PORTA:',
-        mailConfig.port
-      )
-
-      console.log(
-        'SECURE:',
-        mailConfig.secure
-      )
-
-      console.log(
-        'FAMÍLIA IP:',
-        4
-      )
-
-      console.log(
-        'USUÁRIO:',
-        mailConfig.auth.user
-      )
+      console.log('HOST:', mailConfig.host)
+      console.log('PORTA:', mailConfig.port)
+      console.log('SECURE:', mailConfig.secure)
+      console.log('USUÁRIO:', mailConfig.auth.user)
 
       console.log(
         'SENHA CONFIGURADA:',
@@ -118,9 +109,11 @@ export default class MessagesController {
       )
 
       /**
-       * Verifica se as configurações
-       * obrigatórias existem.
+       * =====================================================
+       * 3. VALIDAR VARIÁVEIS DE AMBIENTE
+       * =====================================================
        */
+
       if (!mailConfig.host) {
         return response.status(500).json({
           message: 'MAIL_HOST não configurado.',
@@ -141,32 +134,56 @@ export default class MessagesController {
 
       if (!mailConfig.from.address) {
         return response.status(500).json({
-          message:
-            'MAIL_FROM_ADDRESS não configurado.',
+          message: 'MAIL_FROM_ADDRESS não configurado.',
         })
       }
 
       if (!mailConfig.to) {
         return response.status(500).json({
-          message:
-            'MAIL_TO não configurado.',
+          message: 'MAIL_TO não configurado.',
         })
       }
 
       /**
-       * Criar transporter SMTP.
+       * =====================================================
+       * 4. SALVAR PRIMEIRO NO BANCO
+       * =====================================================
+       *
+       * A mensagem será armazenada mesmo que o SMTP
+       * esteja temporariamente indisponível.
        */
+      console.log('==========================================')
+      console.log('SALVANDO MENSAGEM NO BANCO')
+      console.log('==========================================')
+
+      const message = await Message.create({
+        name: data.name,
+        email: data.email,
+        subject: data.subject,
+        message: data.message,
+        read: false,
+      })
+
+      console.log(
+        'MENSAGEM SALVA COM ID:',
+        message.id
+      )
+
+      /**
+       * =====================================================
+       * 5. CRIAR TRANSPORTER
+       * =====================================================
+       */
+
       const transporter =
         this.createTransporter()
 
-      console.log('==========================================')
-      console.log('PREPARANDO EMAIL')
-      console.log('==========================================')
-
       /**
-       * Escapar os dados antes de
-       * inserir no HTML.
+       * =====================================================
+       * 6. ESCAPAR DADOS PARA HTML
+       * =====================================================
        */
+
       const name = this.escapeHtml(
         data.name
       )
@@ -182,11 +199,25 @@ export default class MessagesController {
       const messageText =
         this.escapeHtml(
           data.message
+        ).replace(/\n/g, '<br>')
+
+      /**
+       * =====================================================
+       * 7. PREPARAR URL DE RESPOSTA
+       * =====================================================
+       */
+
+      const replySubject =
+        encodeURIComponent(
+          `Re: ${data.subject}`
         )
 
       /**
-       * Template HTML do email.
+       * =====================================================
+       * 8. TEMPLATE HTML
+       * =====================================================
        */
+
       const html = `
 <!DOCTYPE html>
 
@@ -299,7 +330,6 @@ export default class MessagesController {
 
           </tr>
 
-
           <!-- CONTENT -->
 
           <tr>
@@ -322,7 +352,6 @@ export default class MessagesController {
                 através do formulário de contacto
                 do seu portfólio.
               </p>
-
 
               <!-- INFORMATION -->
 
@@ -379,7 +408,6 @@ export default class MessagesController {
 
                 </tr>
 
-
                 <!-- EMAIL -->
 
                 <tr>
@@ -428,7 +456,6 @@ export default class MessagesController {
 
                 </tr>
 
-
                 <!-- SUBJECT -->
 
                 <tr>
@@ -466,7 +493,6 @@ export default class MessagesController {
 
               </table>
 
-
               <!-- MESSAGE -->
 
               <div
@@ -496,14 +522,12 @@ export default class MessagesController {
                     font-size:15px;
                     line-height:26px;
                     color:#334155;
-                    white-space:pre-wrap;
                   "
                 >
                   ${messageText}
                 </div>
 
               </div>
-
 
               <!-- BUTTON -->
 
@@ -514,7 +538,7 @@ export default class MessagesController {
               >
 
                 <a
-                  href="mailto:${email}?subject=Re: ${subject}"
+                  href="mailto:${email}?subject=${replySubject}"
                   style="
                     display:inline-block;
                     background:#5FA8A0;
@@ -534,7 +558,6 @@ export default class MessagesController {
             </td>
 
           </tr>
-
 
           <!-- FOOTER -->
 
@@ -588,34 +611,34 @@ export default class MessagesController {
 </html>
 `
 
+      /**
+       * =====================================================
+       * 9. ENVIAR EMAIL
+       * =====================================================
+       *
+       * NÃO usamos transporter.verify().
+       *
+       * sendMail() fará a conexão diretamente.
+       */
+
       console.log('==========================================')
       console.log('ENVIANDO EMAIL...')
       console.log('==========================================')
 
-      /**
-       * NÃO usar transporter.verify().
-       *
-       * sendMail() fará a conexão SMTP
-       * diretamente.
-       */
       let info: SMTPTransport.SentMessageInfo
 
       try {
         info = await transporter.sendMail({
-
           from: {
             name: mailConfig.from.name,
-            address:
-              mailConfig.from.address,
+            address: mailConfig.from.address,
           },
 
           to: mailConfig.to,
 
           /**
-           * Quando você clicar em
-           * "Responder" no Gmail,
-           * a resposta vai para
-           * o email do visitante.
+           * Ao clicar em responder no Gmail,
+           * a resposta será enviada para o visitante.
            */
           replyTo: data.email,
 
@@ -723,20 +746,45 @@ ${data.message}
           )
         }
 
+        /**
+         * A mensagem já está salva no banco.
+         *
+         * Retornamos erro 500 porque o email não foi enviado.
+         */
         return response.status(500).json({
+
           message:
-            'Não foi possível enviar o e-mail.',
+            'Mensagem recebida e salva, mas não foi possível enviar o e-mail.',
+
+          data: {
+            id: message.id,
+          },
 
           error:
             emailError instanceof Error
               ? emailError.message
               : String(emailError),
+
         })
       }
 
-      console.log('==========================================')
-      console.log('EMAIL ENVIADO COM SUCESSO')
-      console.log('==========================================')
+      /**
+       * =====================================================
+       * 10. EMAIL ENVIADO
+       * =====================================================
+       */
+
+      console.log(
+        '=========================================='
+      )
+
+      console.log(
+        'EMAIL ENVIADO COM SUCESSO'
+      )
+
+      console.log(
+        '=========================================='
+      )
 
       console.log(
         'MESSAGE ID:',
@@ -759,16 +807,10 @@ ${data.message}
       )
 
       /**
-       * Salvar no banco somente depois
-       * do envio do email.
+       * =====================================================
+       * 11. RESPOSTA
+       * =====================================================
        */
-      const message = await Message.create({
-        name: data.name,
-        email: data.email,
-        subject: data.subject,
-        message: data.message,
-        read: false,
-      })
 
       return response.status(201).json({
 
@@ -776,17 +818,29 @@ ${data.message}
           'Mensagem enviada com sucesso.',
 
         data: {
+
           id: message.id,
+
           name: message.name,
+
           email: message.email,
+
           subject: message.subject,
+
           createdAt:
             message.createdAt,
+
         },
 
       })
 
     } catch (error) {
+
+      /**
+       * =====================================================
+       * ERRO GERAL
+       * =====================================================
+       */
 
       console.error(
         '=========================================='
@@ -837,9 +891,12 @@ ${data.message}
   }
 
   /**
-   * Listar mensagens.
+   * =======================================================
+   * LISTAR MENSAGENS
+   * =======================================================
    */
   async index({ response }: HttpContext) {
+
     try {
 
       const messages =
@@ -868,7 +925,9 @@ ${data.message}
   }
 
   /**
-   * Mostrar uma mensagem.
+   * =======================================================
+   * MOSTRAR UMA MENSAGEM
+   * =======================================================
    */
   async show({
     params,
@@ -912,7 +971,9 @@ ${data.message}
   }
 
   /**
-   * Marcar mensagem como lida.
+   * =======================================================
+   * MARCAR COMO LIDA
+   * =======================================================
    */
   async read({
     params,
@@ -963,7 +1024,9 @@ ${data.message}
   }
 
   /**
-   * Apagar mensagem.
+   * =======================================================
+   * APAGAR MENSAGEM
+   * =======================================================
    */
   async destroy({
     params,
