@@ -53,6 +53,21 @@ export class MessageSchema extends BaseModel {
   declare updatedAt: DateTime
 }
 
+export class ProjetoTecnologiaSchema extends BaseModel {
+  static $columns = ['createdAt', 'id', 'projetoId', 'tecnologiaId', 'updatedAt'] as const
+  $columns = ProjetoTecnologiaSchema.$columns
+  @column.dateTime({ autoCreate: true })
+  declare createdAt: DateTime
+  @column({ isPrimary: true })
+  declare id: number
+  @column()
+  declare projetoId: number | null
+  @column()
+  declare tecnologiaId: number | null
+  @column.dateTime({ autoCreate: true, autoUpdate: true })
+  declare updatedAt: DateTime
+}
+
 export class ProjetoSchema extends BaseModel {
   static $columns = ['ar', 'createdAt', 'descricao', 'git', 'iamgem', 'id', 'status', 'tecnologiaId', 'titulo', 'updatedAt'] as const
   $columns = ProjetoSchema.$columns
@@ -74,21 +89,6 @@ export class ProjetoSchema extends BaseModel {
   declare tecnologiaId: number | null
   @column()
   declare titulo: string
-  @column.dateTime({ autoCreate: true, autoUpdate: true })
-  declare updatedAt: DateTime
-}
-
-export class ProjetoTecnologiaSchema extends BaseModel {
-  static $columns = ['createdAt', 'id', 'projetoId', 'tecnologiaId', 'updatedAt'] as const
-  $columns = ProjetoTecnologiaSchema.$columns
-  @column.dateTime({ autoCreate: true })
-  declare createdAt: DateTime
-  @column({ isPrimary: true })
-  declare id: number
-  @column()
-  declare projetoId: number | null
-  @column()
-  declare tecnologiaId: number | null
   @column.dateTime({ autoCreate: true, autoUpdate: true })
   declare updatedAt: DateTime
 }
