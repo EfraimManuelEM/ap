@@ -67,6 +67,7 @@
     "@tuyau/core": "^1.2.2",
     "@vinejs/vine": "^4.4.0",
     "better-sqlite3": "^13.0.3",
+    "dns": "^0.2.2",
     "luxon": "^3.7.2",
     "mysql2": "^3.23.3",
     "nodemailer": "^9.0.5",
