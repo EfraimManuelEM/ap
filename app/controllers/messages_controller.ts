@@ -1,19 +1,32 @@
 import type { HttpContext } from '@adonisjs/core/http'
-import nodemailer from 'nodemailer'
+import { Resend } from 'resend'
+
 import Message from '#models/message'
 import { createMessageValidator } from '#validators/message'
 import { mailConfig } from '../../config/mail.js'
-import SMTPTransport from 'nodemailer/lib/smtp-transport/index.js'
-import dns from 'node:dns/promises'
 
 export default class MessagesController {
   /**
    * ============================================================
+   * RESEND
+   * ============================================================
+   */
+  private getResend(): Resend {
+    if (!mailConfig.apiKey) {
+      throw new Error(
+        'RESEND_API_KEY não configurada.'
+      )
+    }
+
+    return new Resend(
+      mailConfig.apiKey
+    )
+  }
+
+  /**
+   * ============================================================
    * ESCAPAR HTML
    * ============================================================
-   *
-   * Evita que os dados enviados pelo formulário
-   * sejam interpretados como HTML dentro do email.
    */
   private escapeHtml(value: string): string {
     return value
@@ -26,207 +39,121 @@ export default class MessagesController {
 
   /**
    * ============================================================
-   * CRIAR TRANSPORTER SMTP
-   * ============================================================
-   *
-   * Gmail:
-   *
-   * MAIL_HOST=smtp.gmail.com
-   * MAIL_PORT=587
-   * MAIL_SECURE=false
-   *
-   * A porta 587 utiliza STARTTLS.
-   *
-   * O Railway estava tentando conectar através de IPv6.
-   * Por isso resolvemos smtp.gmail.com manualmente para IPv4.
-   */
-  private async createTransporter(): Promise<nodemailer.Transporter> {
-    console.log('==========================================')
-    console.log('RESOLVENDO DNS DO SMTP')
-    console.log('==========================================')
-
-    const addresses = await dns.resolve4(mailConfig.host)
-
-    if (!addresses.length) {
-      throw new Error(
-        `Não foi possível encontrar um endereço IPv4 para ${mailConfig.host}`
-      )
-    }
-
-    const ipv4 = addresses[0]
-
-    console.log('HOST SMTP:', mailConfig.host)
-    console.log('IPv4 SMTP:', ipv4)
-    console.log('PORTA SMTP:', mailConfig.port)
-    console.log('SECURE:', mailConfig.secure)
-
-    const smtpOptions: SMTPTransport.Options = {
-      /**
-       * Conecta diretamente ao IPv4.
-       */
-      host: ipv4,
-
-      /**
-       * Gmail SMTP.
-       */
-      port: Number(mailConfig.port),
-
-      /**
-       * Porta 587 = STARTTLS.
-       *
-       * Portanto:
-       * secure = false
-       */
-      secure: Boolean(mailConfig.secure),
-
-      /**
-       * Autenticação Gmail.
-       */
-      auth: {
-        user: mailConfig.auth.user,
-        pass: mailConfig.auth.pass,
-      },
-
-      /**
-       * TLS.
-       *
-       * servername continua sendo smtp.gmail.com
-       * mesmo conectando através do IPv4.
-       *
-       * Isso é importante para a validação
-       * do certificado/SNI.
-       */
-      tls: {
-        servername: mailConfig.host,
-        rejectUnauthorized: true,
-      },
-
-      /**
-       * Timeout para conexão.
-       */
-      connectionTimeout: 30000,
-
-      /**
-       * Timeout para resposta inicial do servidor.
-       */
-      greetingTimeout: 30000,
-
-      /**
-       * Timeout do socket.
-       */
-      socketTimeout: 30000,
-    }
-
-    return nodemailer.createTransport(smtpOptions)
-  }
-
-  /**
-   * ============================================================
    * CRIAR MENSAGEM
    * ============================================================
    */
-  async store({ request, response }: HttpContext) {
+  async store({
+    request,
+    response,
+  }: HttpContext) {
     try {
       /**
        * ========================================================
        * 1. VALIDAR DADOS
        * ========================================================
        */
-      const data = await request.validateUsing(
-        createMessageValidator
+      const data =
+        await request.validateUsing(
+          createMessageValidator
+        )
+
+      console.log(
+        '=========================================='
+      )
+
+      console.log(
+        'NOVA MENSAGEM DE CONTACTO'
+      )
+
+      console.log(
+        '=========================================='
+      )
+
+      console.log(
+        'NOME:',
+        data.name
+      )
+
+      console.log(
+        'EMAIL:',
+        data.email
+      )
+
+      console.log(
+        'ASSUNTO:',
+        data.subject
       )
 
       /**
        * ========================================================
-       * 2. CONFIGURAÇÃO SMTP
-       * ========================================================
-       */
-      console.log('==========================================')
-      console.log('CONFIGURAÇÃO SMTP')
-      console.log('==========================================')
-
-      console.log('HOST:', mailConfig.host)
-      console.log('PORTA:', mailConfig.port)
-      console.log('SECURE:', mailConfig.secure)
-      console.log('USUÁRIO:', mailConfig.auth.user)
-
-      console.log(
-        'SENHA CONFIGURADA:',
-        Boolean(mailConfig.auth.pass)
-      )
-
-      console.log(
-        'COMPRIMENTO DA SENHA:',
-        mailConfig.auth.pass?.length ?? 0
-      )
-
-      console.log(
-        'FROM:',
-        mailConfig.from.address
-      )
-
-      console.log(
-        'TO:',
-        mailConfig.to
-      )
-
-      /**
-       * ========================================================
-       * 3. VALIDAR CONFIGURAÇÕES
+       * 2. VALIDAR CONFIGURAÇÃO DE EMAIL
        * ========================================================
        */
 
-      if (!mailConfig.host) {
-        return response.status(500).json({
-          message: 'MAIL_HOST não configurado.',
-        })
-      }
+      if (!mailConfig.apiKey) {
+        console.error(
+          'RESEND_API_KEY não configurada.'
+        )
 
-      if (!mailConfig.auth.user) {
         return response.status(500).json({
-          message: 'MAIL_USERNAME não configurado.',
-        })
-      }
-
-      if (!mailConfig.auth.pass) {
-        return response.status(500).json({
-          message: 'MAIL_PASSWORD não configurado.',
+          message:
+            'Serviço de email não configurado.',
         })
       }
 
       if (!mailConfig.from.address) {
+        console.error(
+          'MAIL_FROM_ADDRESS não configurado.'
+        )
+
         return response.status(500).json({
-          message: 'MAIL_FROM_ADDRESS não configurado.',
+          message:
+            'Email remetente não configurado.',
         })
       }
 
       if (!mailConfig.to) {
+        console.error(
+          'MAIL_TO não configurado.'
+        )
+
         return response.status(500).json({
-          message: 'MAIL_TO não configurado.',
+          message:
+            'Email destinatário não configurado.',
         })
       }
 
       /**
        * ========================================================
-       * 4. SALVAR MENSAGEM NO BANCO
+       * 3. SALVAR NO BANCO
        * ========================================================
        *
-       * Salvamos primeiro.
+       * Primeiro salvamos no MySQL.
        *
-       * Assim, se o Gmail estiver indisponível,
-       * a mensagem do visitante não será perdida.
+       * Dessa forma, mesmo que o serviço de email
+       * esteja temporariamente indisponível,
+       * a mensagem não será perdida.
        */
-      console.log('==========================================')
-      console.log('SALVANDO MENSAGEM NO BANCO')
-      console.log('==========================================')
+      console.log(
+        '=========================================='
+      )
 
-      const message = await Message.create({
-        name: data.name,
-        email: data.email,
-        subject: data.subject,
-        message: data.message,
-        read: false,
-      })
+      console.log(
+        'SALVANDO MENSAGEM NO BANCO'
+      )
+
+      console.log(
+        '=========================================='
+      )
+
+      const message =
+        await Message.create({
+          name: data.name,
+          email: data.email,
+          subject: data.subject,
+          message: data.message,
+          read: false,
+        })
 
       console.log(
         'MENSAGEM SALVA COM ID:',
@@ -235,55 +162,49 @@ export default class MessagesController {
 
       /**
        * ========================================================
-       * 5. CRIAR TRANSPORTER
-       * ========================================================
-       *
-       * IMPORTANTE:
-       *
-       * createTransporter() é async porque usamos
-       * dns.resolve4().
-       */
-      console.log('==========================================')
-      console.log('CRIANDO TRANSPORTER SMTP')
-      console.log('==========================================')
-
-      const transporter = await this.createTransporter()
-
-      /**
-       * ========================================================
-       * 6. ESCAPAR DADOS
+       * 4. ESCAPAR DADOS
        * ========================================================
        */
 
-      const name = this.escapeHtml(
-        data.name
-      )
+      const name =
+        this.escapeHtml(
+          data.name
+        )
 
-      const email = this.escapeHtml(
-        data.email
-      )
+      const email =
+        this.escapeHtml(
+          data.email
+        )
 
-      const subject = this.escapeHtml(
-        data.subject
-      )
+      const subject =
+        this.escapeHtml(
+          data.subject
+        )
 
-      const messageText = this
-        .escapeHtml(data.message)
-        .replace(/\n/g, '<br>')
+      const messageText =
+        this
+          .escapeHtml(
+            data.message
+          )
+          .replace(
+            /\n/g,
+            '<br>'
+          )
 
       /**
        * ========================================================
-       * 7. PREPARAR ASSUNTO DA RESPOSTA
+       * 5. ASSUNTO DA RESPOSTA
        * ========================================================
        */
 
-      const replySubject = encodeURIComponent(
-        `Re: ${data.subject}`
-      )
+      const replySubject =
+        encodeURIComponent(
+          `Re: ${data.subject}`
+        )
 
       /**
        * ========================================================
-       * 8. TEMPLATE HTML DO EMAIL
+       * 6. HTML DO EMAIL
        * ========================================================
        */
 
@@ -346,9 +267,7 @@ export default class MessagesController {
           "
         >
 
-          <!-- ========================================= -->
           <!-- HEADER -->
-          <!-- ========================================= -->
 
           <tr>
 
@@ -401,9 +320,7 @@ export default class MessagesController {
 
           </tr>
 
-          <!-- ========================================= -->
           <!-- CONTENT -->
-          <!-- ========================================= -->
 
           <tr>
 
@@ -426,9 +343,7 @@ export default class MessagesController {
                 do seu portfólio.
               </p>
 
-              <!-- ===================================== -->
               <!-- INFORMATION -->
-              <!-- ===================================== -->
 
               <table
                 width="100%"
@@ -568,9 +483,7 @@ export default class MessagesController {
 
               </table>
 
-              <!-- ===================================== -->
               <!-- MESSAGE -->
-              <!-- ===================================== -->
 
               <div
                 style="
@@ -606,9 +519,7 @@ export default class MessagesController {
 
               </div>
 
-              <!-- ===================================== -->
               <!-- BUTTON -->
-              <!-- ===================================== -->
 
               <div
                 style="
@@ -638,9 +549,7 @@ export default class MessagesController {
 
           </tr>
 
-          <!-- ========================================= -->
           <!-- FOOTER -->
-          <!-- ========================================= -->
 
           <tr>
 
@@ -694,37 +603,42 @@ export default class MessagesController {
 
       /**
        * ========================================================
-       * 9. ENVIAR EMAIL
+       * 7. ENVIAR EMAIL COM RESEND
        * ========================================================
-       *
-       * Não usamos transporter.verify().
-       *
-       * sendMail() fará a conexão diretamente.
        */
-      console.log('==========================================')
-      console.log('ENVIANDO EMAIL...')
-      console.log('==========================================')
+      console.log(
+        '=========================================='
+      )
 
-      let info: SMTPTransport.SentMessageInfo
+      console.log(
+        'ENVIANDO EMAIL COM RESEND'
+      )
 
-      try {
-        info = await transporter.sendMail({
-          from: {
-            name: mailConfig.from.name,
-            address: mailConfig.from.address,
-          },
+      console.log(
+        '=========================================='
+      )
 
-          to: mailConfig.to,
+      const resend =
+        this.getResend()
 
-          /**
-           * Quando responder no Gmail,
-           * a resposta vai para o visitante.
-           */
-          replyTo: data.email,
+      const {
+        data: emailData,
+        error: emailError,
+      } = await resend.emails.send({
+        from:
+          `${mailConfig.from.name} <${mailConfig.from.address}>`,
 
-          subject: `Novo contacto: ${data.subject}`,
+        to: [
+          mailConfig.to,
+        ],
 
-          text: `
+        replyTo:
+          data.email,
+
+        subject:
+          `Novo contacto: ${data.subject}`,
+
+        text: `
 Nova mensagem recebida através do portfólio.
 
 Nome: ${data.name}
@@ -734,17 +648,17 @@ Assunto: ${data.subject}
 Mensagem:
 
 ${data.message}
-          `,
+        `,
 
-          html,
-        })
-      } catch (emailError) {
-        /**
-         * ======================================================
-         * ERRO SMTP
-         * ======================================================
-         */
+        html,
+      })
 
+      /**
+       * ========================================================
+       * 8. ERRO DO RESEND
+       * ========================================================
+       */
+      if (emailError) {
         console.error(
           '=========================================='
         )
@@ -758,82 +672,10 @@ ${data.message}
         )
 
         console.error(
-          'TIPO:',
-          emailError instanceof Error
-            ? emailError.name
-            : typeof emailError
+          'RESEND ERROR:',
+          emailError
         )
 
-        console.error(
-          'MENSAGEM:',
-          emailError instanceof Error
-            ? emailError.message
-            : String(emailError)
-        )
-
-        if (
-          typeof emailError === 'object' &&
-          emailError !== null
-        ) {
-          const smtpError =
-            emailError as {
-              code?: string
-              command?: string
-              response?: string
-              responseCode?: number
-              errno?: number
-              syscall?: string
-              address?: string
-              port?: number
-            }
-
-          console.error(
-            'CÓDIGO:',
-            smtpError.code
-          )
-
-          console.error(
-            'COMANDO:',
-            smtpError.command
-          )
-
-          console.error(
-            'RESPOSTA SMTP:',
-            smtpError.response
-          )
-
-          console.error(
-            'CÓDIGO RESPOSTA:',
-            smtpError.responseCode
-          )
-
-          console.error(
-            'ENDEREÇO:',
-            smtpError.address
-          )
-
-          console.error(
-            'PORTA:',
-            smtpError.port
-          )
-
-          console.error(
-            'ERRNO:',
-            smtpError.errno
-          )
-
-          console.error(
-            'SYSCALL:',
-            smtpError.syscall
-          )
-        }
-
-        /**
-         * A mensagem já foi salva no banco.
-         *
-         * Portanto não perdemos a mensagem
-         * mesmo quando o email falha.
-         */
         return response.status(500).json({
           message:
             'Mensagem recebida e salva, mas não foi possível enviar o e-mail.',
@@ -843,15 +685,13 @@ ${data.message}
           },
 
           error:
-            emailError instanceof Error
-              ? emailError.message
-              : String(emailError),
+            emailError.message,
         })
       }
 
       /**
        * ========================================================
-       * 10. EMAIL ENVIADO COM SUCESSO
+       * 9. EMAIL ENVIADO
        * ========================================================
        */
 
@@ -868,28 +708,13 @@ ${data.message}
       )
 
       console.log(
-        'MESSAGE ID:',
-        info.messageId
-      )
-
-      console.log(
-        'ACCEPTED:',
-        info.accepted
-      )
-
-      console.log(
-        'REJECTED:',
-        info.rejected
-      )
-
-      console.log(
-        'RESPONSE:',
-        info.response
+        'RESEND ID:',
+        emailData?.id
       )
 
       /**
        * ========================================================
-       * 11. RESPOSTA PARA O FRONTEND
+       * 10. RESPOSTA
        * ========================================================
        */
 
@@ -908,6 +733,9 @@ ${data.message}
 
           createdAt:
             message.createdAt,
+
+          emailId:
+            emailData?.id,
         },
       })
     } catch (error) {
@@ -974,7 +802,9 @@ ${data.message}
    * LISTAR MENSAGENS
    * ============================================================
    */
-  async index({ response }: HttpContext) {
+  async index({
+    response,
+  }: HttpContext) {
     try {
       const messages =
         await Message
