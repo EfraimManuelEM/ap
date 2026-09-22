@@ -23,7 +23,12 @@ export default class extends BaseSchema {
 
       table.unique(['projeto_id', 'tecnologia_id'])
 
-      table.timestamp('created_at').notNullable()
+      // Timestamps
+      table
+        .timestamp('created_at')
+        .notNullable()
+        .defaultTo(this.now())
+
       table
         .timestamp('updated_at')
         .notNullable()
